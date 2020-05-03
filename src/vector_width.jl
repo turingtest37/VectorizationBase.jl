@@ -155,6 +155,11 @@ end
 @inline scalar_notequal(i::_MM, ::Static{j}) where {j} = i.i != j
 @inline scalar_notequal(::Static{i}, j::_MM) where {i} = i != j.i
 @inline scalar_notequal(i::_MM, j::_MM) = i.i != j.i
+@inline scalar_mul(i, j) = i * j
+@inline scalar_mul(i::_MM{W}, j::Integer) where {W} = _MM{W}(i.i * j)
+@inline scalar_mul(i::Integer, j::_MM{W}) where {W} = _MM{W}(i * j.i)
+@inline scalar_mul(i::_MM, ::Static{j}) where {W,j} = _MM{W}(i.i * j)
+@inline scalar_mul(::Static{i}, j::_MM{W}) where {W,i} = _MM{W}(i * j.i)
 
 @inline extract_data(i::_MM) = i.i
 

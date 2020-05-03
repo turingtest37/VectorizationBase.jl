@@ -164,6 +164,10 @@ static_promote(::Static{M}, ::Static{M}) where {M} = Static{M}()
 @inline staticm1(i::Tuple{I}) where {I} = @inbounds (i[1] - 1,)
 @inline staticm1(i::Tuple{I1,I2}) where {I1,I2} = @inbounds (i[1] - 1, i[2] - 1)
 @inline staticm1(i::Tuple{I1,I2,I3,Vararg}) where {I1,I2,I3} = @inbounds (i[1] - 1, staticm1(Base.tail(i))...)
+@inline staticmul(i::Tuple{}, ::Any) = tuple()
+@inline staticmul(i::Tuple{I}, j) where {I} = @inbounds (i[1] * j,)
+@inline staticmul(i::Tuple{I1,I2}, j) where {I1,I2} = @inbounds (i[1] * j, i[2] * j)
+@inline staticmul(i::Tuple{I1,I2,I3,Vararg}, j) where {I1,I2,I3} = @inbounds (i[1] * j, staticmul(Base.tail(i), j)...)
 @inline Base.ntuple(f::F, ::Static{N}) where {F,N} = ntuple(f, Val{N}())
 
 

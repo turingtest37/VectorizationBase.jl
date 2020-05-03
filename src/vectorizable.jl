@@ -62,8 +62,9 @@ end
     decl = "!1 = !{!\"noaliasdomain\"}\n!2 = !{!\"noaliasscope\", !1}\n!3 = !{!2}"
     alignment = Base.datatype_alignment(T)
     # push!(flags, "!noalias !0")
-    push!(instrs, "%typptr = inttoptr $ptyp %0 to $typ*")
-    push!(instrs, "%ptr = getelementptr inbounds $typ, $typ* %typptr, $ityp %1")
+    push!(instrs, "%offsetptr = add nsw nuw $ptyp %0, %1")
+    push!(instrs, "%ptr = inttoptr $ptyp %offsetptr to $typ*")
+    # push!(instrs, "%ptr = getelementptr inbounds $typ, $typ* %typptr, $ityp %1")
     push!(instrs, "%res = load $typ, $typ* %ptr, align $alignment, !alias.scope !3")
     push!(instrs, "ret $typ %res")
     quote
@@ -78,8 +79,10 @@ end
     instrs = String[]
     alignment = Base.datatype_alignment(T)
     # push!(flags, "!noalias !0")
-    push!(instrs, "%typptr = inttoptr $ptyp %0 to $typ*")
-    push!(instrs, "%ptr = getelementptr inbounds $typ, $typ* %typptr, $ityp %2")
+    push!(instrs, "%offsetptr = add nsw nuw $ptyp %0, %2")
+    push!(instrs, "%ptr = inttoptr $ptyp %offsetptr to $typ*")
+    # push!(instrs, "%typptr = inttoptr $ptyp %0 to $typ*")
+    # push!(instrs, "%ptr = getelementptr inbounds $typ, $typ* %typptr, $ityp %2")
     push!(instrs, "store $typ %1, $typ* %ptr, align $alignment")
     push!(instrs, "ret void")
     quote
@@ -95,8 +98,10 @@ end
     decl = "!1 = !{!\"noaliasdomain\"}\n!2 = !{!\"noaliasscope\", !1}\n!3 = !{!2}"
     alignment = Base.datatype_alignment(T)
     # push!(flags, "!noalias !0")
-    push!(instrs, "%typptr = inttoptr $ptyp %0 to $typ*")
-    push!(instrs, "%ptr = getelementptr inbounds $typ, $typ* %typptr, $ityp %2")
+    push!(instrs, "%offsetptr = add nsw nuw $ptyp %0, %2")
+    push!(instrs, "%ptr = inttoptr $ptyp %offsetptr to $typ*")
+    # push!(instrs, "%typptr = inttoptr $ptyp %0 to $typ*")
+    # push!(instrs, "%ptr = getelementptr inbounds $typ, $typ* %typptr, $ityp %2")
     push!(instrs, "store $typ %1, $typ* %ptr, align $alignment, !noalias !3")
     push!(instrs, "ret void")
     quote
@@ -234,6 +239,7 @@ abstract type AbstractStridedPointer{T} <: AbstractPointer{T} end
 abstract type AbstractColumnMajorStridedPointer{T,N} <: AbstractStridedPointer{T} end
 struct PackedStridedPointer{T,N} <: AbstractColumnMajorStridedPointer{T,N}
     ptr::Ptr{T}
+    "Strides 2:N of N-d array in bytes."
     strides::NTuple{N,Int}
 end
 struct PackedStridedBitPointer{N} <: AbstractColumnMajorStridedPointer{Bool,N}
@@ -244,6 +250,7 @@ end
 abstract type AbstractRowMajorStridedPointer{T,N} <: AbstractStridedPointer{T} end
 struct RowMajorStridedPointer{T,N} <: AbstractRowMajorStridedPointer{T,N}
     ptr::Ptr{T}
+    "Strides 1:N-1 of N-d array in bytes, in reversed order."
     strides::NTuple{N,Int}
 end
 struct RowMajorStridedBitPointer{N} <: AbstractRowMajorStridedPointer{Bool,N}
@@ -254,6 +261,7 @@ end
 abstract type AbstractSparseStridedPointer{T,N} <: AbstractStridedPointer{T} end
 struct SparseStridedPointer{T,N} <: AbstractSparseStridedPointer{T,N}
     ptr::Ptr{T}
+    "Strides 1:N of N-d array in bytes."
     strides::NTuple{N,Int}
 end
 struct SparseStridedBitPointer{N} <: AbstractSparseStridedPointer{Bool,N}
@@ -262,6 +270,9 @@ struct SparseStridedBitPointer{N} <: AbstractSparseStridedPointer{Bool,N}
 end
 
 abstract type AbstractStaticStridedPointer{T,X} <: AbstractStridedPointer{T} end
+"""
+X contains the strides, in bytes.
+"""
 struct StaticStridedPointer{T,X} <: AbstractStaticStridedPointer{T,X}
     ptr::Ptr{T}
 end
@@ -271,18 +282,21 @@ end
 const AbstractBitPointer = Union{PackedStridedBitPointer, RowMajorStridedBitPointer, SparseStridedBitPointer, StaticStridedBitPointer}
 
 @inline offset(::AbstractColumnMajorStridedPointer, ::Tuple{}) = 0
-@inline offset(::AbstractColumnMajorStridedPointer, i::Tuple{I}) where {I} = @inbounds i[1]
-@inline offset(ptr::AbstractColumnMajorStridedPointer, i::Tuple{I,Vararg}) where {I} = @inbounds i[1] + tdot(Base.tail(i), ptr.strides)
+@inline offset(::AbstractColumnMajorStridedPointer{T}, i::Tuple{I}) where {T,I} = @inbounds scalar_mul(i[1], sizeof(T))
+@inline offset(ptr::AbstractColumnMajorStridedPointer{T}, i::Tuple{I,Vararg}) where {T,I} = @inbounds i[1] * sizeof(T) + tdot(Base.tail(i), ptr.strides)
+@inline offset(ptr::AbstractColumnMajorStridedPointer{T}, i::Tuple{I,Vararg{Integer}}) where {T,I} = @inbounds scalar_mul(i[1], sizeof(T)) + tdot(Base.tail(i), ptr.strides)
 
-@inline offset(ptr::AbstractColumnMajorStridedPointer{T,0}, i::Tuple{I,Vararg}) where {T,I} = @inbounds i[1]
-@inline offset(ptr::AbstractColumnMajorStridedPointer{T,0}, i::Tuple{I}) where {T,I} = @inbounds i[1]
-@inline offset(ptr::AbstractColumnMajorStridedPointer, i::Integer) = i
-@inline offset(ptr::AbstractRowMajorStridedPointer, i::Integer) = i
+@inline offset(ptr::AbstractColumnMajorStridedPointer{T,0}, i::Tuple{I,Vararg{Integer}}) where {T,I} = @inbounds scalar_mul(i[1], sizeof(T))
+@inline offset(ptr::AbstractColumnMajorStridedPointer{T,0}, i::Tuple{I,Vararg}) where {T,I} = @inbounds i[1] * sizeof(T)
+@inline offset(ptr::AbstractColumnMajorStridedPointer{T,0}, i::Tuple{I}) where {T,I} = @inbounds scalar_mul(i[1], sizeof(T))
+@inline offset(ptr::AbstractColumnMajorStridedPointer{T}, i::Integer) where {T} = i * sizeof(T)
+@inline offset(ptr::AbstractRowMajorStridedPointer{T}, i::Integer) where {T} = i * sizeof(T)
 # @inline offset(ptr::AbstractSparseStridedPointer, i::Integer) = i * @inbounds ptr.strides[1]
 # @inline offset(ptr::AbstractStaticStridedPointer{<:Any,<:Tuple{1,Vararg}}, i::Integer) = i
 # @inline offset(ptr::AbstractStaticStridedPointer{<:Any,<:Tuple{M,Vararg}}, i::Integer) where {M} = M*i
-@inline gep(ptr::AbstractStridedPointer, i::Tuple) = gep(ptr.ptr, offset(ptr, i))
-@inline gep(ptr::AbstractStridedPointer, i::Tuple{I}) where {I} = gep(ptr.ptr, first(offset(ptr, i)))
+@inline gep(ptr::AbstractStridedPointer, i::Tuple) = ptr.ptr + offset(ptr, i) #gep(ptr.ptr, offset(ptr, i))
+@inline gep(ptr::AbstractColumnMajorStridedPointer, i::Tuple{I}) where {I} = gep(ptr.ptr, i[1])
+@inline gep(ptr::AbstractStridedPointer, i::Tuple{I}) where {I} = ptr.ptr + first(offset(ptr, i))
 @inline gesp(ptr::AbstractStridedPointer, i) = similar(ptr, gep(ptr, i))
 
 @inline Base.similar(p::PackedStridedPointer, ptr::Ptr) = PackedStridedPointer(ptr, p.strides)
@@ -304,10 +318,13 @@ const AbstractBitPointer = Union{PackedStridedBitPointer, RowMajorStridedBitPoin
 # @inline gesp(ptr::StaticStridedBitPointer{X}, i) where {X} = StaticStridedBitPointer{X}(gep(ptr, i))
 
 @inline LinearAlgebra.transpose(ptr::RowMajorStridedPointer) = PackedStridedPointer(ptr.ptr, ptr.strides)
-@inline offset(ptr::AbstractRowMajorStridedPointer{T,0}, i::Tuple{I}) where {T,I} = @inbounds i[1]
-@inline offset(ptr::AbstractRowMajorStridedPointer{T,1}, i::Tuple{I1,I2}) where {T,I1,I2} = @inbounds i[1]*ptr.strides[1] + i[2]
-@inline offset(ptr::AbstractRowMajorStridedPointer{T,2}, i::Tuple{I1,I2,I3}) where {T,I1,I2,I3} = @inbounds i[1]*ptr.strides[2] + i[2]*ptr.strides[1] + i[3]
-@inline offset(ptr::AbstractRowMajorStridedPointer{T}, i::Tuple) where {T,N} = (ri = reverse(i); @inbounds ri[1] + tdot(ptr.strides, Base.tail(ri)))
+@inline offset(ptr::AbstractRowMajorStridedPointer{T,0}, i::Tuple{I}) where {T,I} = @inbounds scalar_mul(i[1], sizeof(T))
+@inline offset(ptr::AbstractRowMajorStridedPointer{T,1}, i::Tuple{I1,I2}) where {T,I1,I2} = @inbounds i[1]*ptr.strides[1] + i[2] * sizeof(T)
+@inline offset(ptr::AbstractRowMajorStridedPointer{T,2}, i::Tuple{I1,I2,I3}) where {T,I1,I2,I3} = @inbounds i[1]*ptr.strides[2] + i[2]*ptr.strides[1] + i[3] * sizeof(T)
+@inline offset(ptr::AbstractRowMajorStridedPointer{T}, i::Tuple) where {T,N} = offset(transpose(ptr), reverse(i))
+
+@inline offset(ptr::AbstractRowMajorStridedPointer{T,1}, i::Tuple{I1,I2}) where {T,I1<:Integer,I2} = @inbounds i[1]*ptr.strides[1] + scalar_mul(i[2], sizeof(T))
+@inline offset(ptr::AbstractRowMajorStridedPointer{T,2}, i::Tuple{I1,I2,I3}) where {T,I1<:Integer,I2<:Integer,I3} = @inbounds i[1]*ptr.strides[2] + i[2]*ptr.strides[1] + scalar_mul(i[3], sizeof(T))
 # @inline function offset(ptr::AbstractRowMajorStridedPointer{Cvoid,0}, i::Tuple{Int})
     # ptr.ptr + first(i)
 # end
@@ -382,14 +399,15 @@ const AbstractInitializedPointer{T} = Union{
     StaticStridedStruct{T}
 }
 
-@inline Base.stride(ptr::AbstractColumnMajorStridedPointer, i) = isone(i) ? 1 : @inbounds ptr.strides[i-1]
-@inline Base.stride(ptr::AbstractSparseStridedPointer, i) = @inbounds ptr.strides[i]
+@inline Base.stride(ptr::AbstractColumnMajorStridedPointer{T}, i) where {T} = isone(i) ? 1 : @inbounds ptr.strides[i-1] ÷ sizeof(T)
+@inline Base.stride(ptr::AbstractSparseStridedPointer{T}, i) where {T} = @inbounds ptr.strides[i] ÷ sizeof(T)
 @generated function Base.stride(::AbstractStaticStridedPointer{T,X}, i) where {T,X}
-    Expr(:block, Expr(:meta, :inline), Expr(:getindex, Expr(:tuple, X.parameters...), :i))
+    strides = map(x -> x ÷ sizeof(T), X.parameters)
+    Expr(:block, Expr(:meta, :inline), Expr(:getindex, Expr(:tuple, strides...), :i))
 end
 @inline LinearAlgebra.stride1(ptr::AbstractColumnMajorStridedPointer) = 1
-@inline LinearAlgebra.stride1(ptr::AbstractSparseStridedPointer) = @inbounds first(ptr.strides)
-@inline LinearAlgebra.stride1(::AbstractStaticStridedPointer{T,<:Tuple{X,Vararg}}) where {T,X} = X
+@inline LinearAlgebra.stride1(ptr::AbstractSparseStridedPointer{T}) where {T} = @inbounds first(ptr.strides) ÷ sizeof(T)
+@inline LinearAlgebra.stride1(::AbstractStaticStridedPointer{T,<:Tuple{X,Vararg}}) where {T,X} = X ÷ sizeof(T)
 
 @inline offset(ptr::AbstractPointer, i::CartesianIndex) = offset(ptr, i.I)
 
@@ -409,6 +427,10 @@ end
 @inline Base.getindex(ptr::AbstractPointer, i, j) = vload(ptr, (i, j))
 @inline Base.getindex(ptr::AbstractPointer, i, j, k) = vload(ptr, (i, j, k))
 @inline Base.getindex(ptr::AbstractPointer, i, j, k, rests...) = vload(ptr, (i, j, k, rests...))
+@inline Base.setindex!(ptr::AbstractPointer, v, i) = vstore!(ptr, v, (i, ))
+@inline Base.setindex!(ptr::AbstractPointer, v, i, j) = vstore!(ptr, v, (i, j))
+@inline Base.setindex!(ptr::AbstractPointer, v, i, j, k) = vstore!(ptr, v, (i, j, k))
+@inline Base.setindex!(ptr::AbstractPointer, v, i, j, k, rests...) = vstore!(ptr, v, (i, j, k, rests...))
 
 @inline vstore!(ptr::AbstractPointer{T}, v::T) where {T} = vstore!(ptr.ptr, v)
 @inline Base.unsafe_store!(ptr::AbstractPointer{T}, v::T) where {T} = vstore!(ptr.ptr, v)
@@ -417,7 +439,7 @@ end
 # @inline vstore!(ptr::AbstractPointer{T}, v, i::Tuple) where {T} = vstore!(ptr.ptr, v, offset(ptr, i))
 # @inline vstore!(ptr::AbstractPointer{T}, v, i::Tuple, u::Unsigned) where {T} = vstore!(ptr.ptr, v, offset(ptr, i), u)
 @inline Base.unsafe_store!(ptr::AbstractPointer{T}, v::T, i) where {T} = vstore!(ptr.ptr, v, offset(ptr, i - 1))
-@inline Base.setindex!(ptr::AbstractPointer{T}, v::T, i) where {T} = vstore!(ptr.ptr, v, offset(ptr, i))
+@inline Base.setindex!(ptr::AbstractPointer{T}, v::T, i::Tuple) where {T} = vstore!(ptr.ptr, v, offset(ptr, i))
 
 # @inline Pointer(A) = Pointer(pointer(A))
 @inline Base.pointer(ptr::AbstractPointer) = ptr.ptr
@@ -436,8 +458,8 @@ end
 @inline stridedpointer(x::Ptr) = PackedStridedPointer(x, tuple())
 @inline stridedpointer(x::Union{LowerTriangular,UpperTriangular}) = stridedpointer(parent(x))
 # @inline stridedpointer(x::AbstractArray) = stridedpointer(parent(x))
-@inline stridedpointer(A::AbstractArray) = PackedStridedPointer(pointer(A), Base.tail(strides(A)))
 @inline tailstrides(A::AbstractArray) = Base.tail(strides(A))
+@inline stridedpointer(A::AbstractArray{T}) where {T} = PackedStridedPointer(pointer(A), staticmul(tailstrides(A), sizeof(T)))
 @inline tailstrides(A::BitArray{1}) = tuple()
 @inline tailstrides(A::BitArray{2}) = (size(A,1),)
 @inline tailstrides(A::BitArray{3}) = (size(A,1),size(A,1)*size(A,2))
@@ -451,22 +473,22 @@ end
 @inline stridedpointer(A::BitArray) = PackedStridedBitPointer(pointer(A.chunks), tailstrides(A))
 @inline stridedpointer(A::AbstractArray{T,0}) where {T} = pointer(A)
 @inline stridedpointer(A::SubArray{T,0,P,S}) where {T,P,S <: Tuple{Int,Vararg}} = pointer(A)
-@inline stridedpointer(A::SubArray{T,N,P,S}) where {T,N,P,S <: Tuple{Int,Vararg}} = SparseStridedPointer(pointer(A), strides(A))
-@inline stridedpointer(A::SubArray{T,N,P,S}) where {T,N,P,S} = PackedStridedPointer(pointer(A), Base.tail(strides(A)))
+@inline stridedpointer(A::SubArray{T,N,P,S}) where {T,N,P,S <: Tuple{Int,Vararg}} = SparseStridedPointer(pointer(A), staticmul(strides(A), sizeof(T)))
+@inline stridedpointer(A::SubArray{T,N,P,S}) where {T,N,P,S} = PackedStridedPointer(pointer(A), staticmul(tailstrides(A), sizeof(T)))
 @inline stridedpointer(B::Union{Adjoint{T,A},Transpose{T,A}}) where {T,A <: AbstractVector{T}} = stridedpointer(parent(B))
-@inline stridedpointer(A::PermutedDimsArray) = SparseStridedPointer(pointer(A), strides(A))
+@inline stridedpointer(A::PermutedDimsArray) = SparseStridedPointer(pointer(A), staticmul(strides(A), sizeof(T))) # TODO: add permutedimsarray, perhaps replacing row major
 
 @inline function stridedpointer(B::Union{Adjoint{T,A},Transpose{T,A}}) where {T,N,A <: AbstractArray{T,N}}
     pB = parent(B)
-    RowMajorStridedPointer(pointer(pB), Base.tail(strides(pB)))
+    RowMajorStridedPointer(pointer(pB), staticmul(tailstrides(pB), sizeof(T)))
 end
 @inline function stridedpointer(B::Union{Adjoint{Bool,A},Transpose{Bool,A}}) where {T,N,A <: BitArray{N}}
     pB = parent(B)
-    RowMajorStridedBitPointer(pointer(pB.chunks), tailstrides(pB))
+    RowMajorStridedBitPointer(pointer(pB.chunks), staticmul(tailstrides(pB), sizeof(T)))
 end
 @inline function stridedpointer(C::Union{Adjoint{T,A},Transpose{T,A}}) where {T, P, B, A <: SubArray{T,2,P,Tuple{Int,Vararg},B}}
     pC = parent(C)
-    SparseStridedPointer(pointer(pC), reverse(strides(pC)))
+    SparseStridedPointer(pointer(pC), staticmul(reverse(strides(pC)), sizeof(T)))
 end
 
 @inline stridedpointer(x::Number) = x
@@ -534,7 +556,7 @@ end
         Expr(:(=), :p, Expr(:(.), :ptr, QuoteNode(:ptr))),
         Expr(:(=), :s, Expr(:(.), :ptr, QuoteNode(:strides))),
         Expr(:(=), :strides, Expr(:macrocall, Symbol("@inbounds"), LineNumberNode(@__LINE__, Symbol(@__FILE__)), strides)),
-        Expr(:(=), :gp, Expr(:call, :gep, :p, offset)),
+        Expr(:(=), :gp, Expr(:call, :+, :p, offset)),
         Expr(:call, :PackedStridedPointer, :gp, :strides)
     )
 end
@@ -558,7 +580,7 @@ end
         Expr(:(=), :p, Expr(:(.), :ptr, QuoteNode(:ptr))),
         Expr(:(=), :s, Expr(:(.), :ptr, QuoteNode(:strides))),
         Expr(:(=), :strides, Expr(:macrocall, Symbol("@inbounds"), LineNumberNode(@__LINE__, Symbol(@__FILE__)), strides)),
-        Expr(:(=), :gp, Expr(:call, :gep, :p, offset)),
+        Expr(:(=), :gp, Expr(:call, :+, :p, offset)),
         Expr(:call, :RowMajorStridedPointer, :gp, :strides)
     )
 end
@@ -573,7 +595,7 @@ end
         Expr(:(=), :p, Expr(:(.), :ptr, QuoteNode(:ptr))),
         Expr(:(=), :s, Expr(:(.), :ptr, QuoteNode(:strides))),
         Expr(:(=), :strides, Expr(:macrocall, Symbol("@inbounds"), LineNumberNode(@__LINE__, Symbol(@__FILE__)), strides)),
-        Expr(:(=), :gp, Expr(:call, :gep, :p, offset)),
+        Expr(:(=), :gp, Expr(:call, :+, :p, offset)),
         Expr(:call, :SparseStridedPointer, :gp, :strides)
     )
 end
@@ -591,7 +613,7 @@ end
         :block,
         Expr(:meta, :inline),
         Expr(:(=), :p, Expr(:(.), :ptr, QuoteNode(:ptr))),
-        Expr(:(=), :gp, Expr(:call, :gep, :p, offset)),
+        Expr(:(=), :gp, Expr(:call, :+, :p, offset)),
         Expr(:call, Expr(:curly, :StaticStridedPointer, T, Xa), :gp)
     )
 end
@@ -623,15 +645,15 @@ end
 
 @inline stridedpointer_for_broadcast(A::AbstractRange) = A
 @inline function stridedpointer_for_broadcast(A::AbstractArray{T,N}) where {T,N}
-    PackedStridedPointer(pointer(A), filter_strides_by_dimequal1(Base.tail(size(A)), Base.tail(strides(A))))
+    PackedStridedPointer(pointer(A), filter_strides_by_dimequal1(Base.tail(size(A)), staticmul(tailstrides(A), sizeof(T))))
 end
 @inline stridedpointer_for_broadcast(B::Union{Adjoint{T,A},Transpose{T,A}}) where {T,A <: AbstractVector{T}} = stridedpointer_for_broadcast(parent(B))
 @inline stridedpointer_for_broadcast(A::SubArray{T,0,P,S}) where {T,P,S <: Tuple{Int,Vararg}} = pointer(A)
 @inline function stridedpointer_for_broadcast(A::SubArray{T,N,P,S}) where {T,N,P,S <: Tuple{Int,Vararg}}
-    SparseStridedPointer(pointer(A), filter_strides_by_dimequal1(size(A), strides(A)))
+    SparseStridedPointer(pointer(A), filter_strides_by_dimequal1(size(A), staticmul(strides(A), sizeof(T))))
 end
 @inline function stridedpointer_for_broadcast(A::SubArray{T,N,P,S}) where {T,N,P,S}
-    PackedStridedPointer(pointer(A), filter_strides_by_dimequal1(Base.tail(size(A)), Base.tail(strides(A))))
+    PackedStridedPointer(pointer(A), filter_strides_by_dimequal1(Base.tail(size(A)), staticmul(tailstrides(A), sizeof(T))))
 end
 @inline stridedpointer_for_broadcast(A::BitArray) = stridedpointer(A)
 
