@@ -13,7 +13,7 @@ const NUM_CORES = COUNTS[:Core]
 L1,L2,L3 = CACHE_COUNT[1:3] 
 
 # The following is amenable to simplification by metaprogramming
-attr = CACHE.children[1].children[1].attr
+attr = L3 > 0 ? CACHE.children[1].children[1].attr : CACHE.children[1].attr
 const L₁CACHE = (
     size = L1 > 0 ? attr.size : nothing,
     depth = L1 > 0 ? attr.depth : nothing,
@@ -21,7 +21,7 @@ const L₁CACHE = (
     associativity = L1 > 0 ? attr.associativity : nothing,
     type = L1 > 0 ? attr.type_ : nothing
 )
-attr = CACHE.children[1].attr
+attr = L3 > 0 ? CACHE.children[1].attr : CACHE.attr
 const L₂CACHE = (
     size = L2 > 0 ? attr.size : nothing,
     depth = L2 > 0 ? attr.depth : nothing,
@@ -29,7 +29,7 @@ const L₂CACHE = (
     associativity = L2 > 0 ? attr.associativity : nothing,
     type = L2 > 0 ? attr.type_ : nothing
 )
-attr = CACHE.attr
+attr = L3 > 0 ? CACHE.attr : nothing
 const L₃CACHE = (
     size = L3 > 0 ? attr.size : nothing,
     depth = L3 > 0 ? attr.depth : nothing,
